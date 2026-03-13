@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VisionGuard | 图像评测</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f7f6; color: #333; margin: 0; padding: 20px; display: flex; justify-content: center; min-height: 100vh; }
+        .container { background: #fff; padding: 30px; border-radius: 12px; box-shadow: 0 8px 30px rgba(0,0,0,0.1); width: 100%; max-width: 900px; }
+        h1 { margin-top: 0; color: #2c3e50; text-align: center; font-size: 26px; }
+        p.subtitle { text-align: center; color: #7f8c8d; margin-bottom: 30px; font-size: 14px; }
+        
+        .upload-row { display: flex; gap: 20px; margin-bottom: 20px; }
+        .upload-group { flex: 1; }
+        .upload-group label { display: block; font-weight: bold; margin-bottom: 8px; color: #34495e; }
+        input[type="file"] { display: block; width: 100%; padding: 10px; border: 2px dashed #bdc3c7; border-radius: 6px; cursor: pointer; transition: 0.3s; box-sizing: border-box; }
+        input[type="file"]:hover { border-color: #3498db; }
+        
+        .btn { display: block; width: 100%; background: #3498db; color: #fff; border: none; padding: 15px; font-size: 16px; border-radius: 6px; cursor: pointer; font-weight: bold; transition: background 0.3s; }
+        .btn:hover { background: #2980b9; }
+        .btn:disabled { background: #95a5a6; cursor: not-allowed; }
+        #batch-results { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 15px; margin-top: 30px; }
+        .task-card { background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 8px; padding: 15px; box-shadow: 0 2px 4px rgba(0,0,0,0.02); }
+        .task-filename { font-size: 13px; font-weight: bold; color: #2c3e50; word-break: break-all; border-bottom: 1px solid #ddd; padding-bottom: 8px; margin-bottom: 8px; }
+        
+        .status-polling { color: #f39c12; font-size: 13px; font-weight: bold; text-align: center; margin-top: 10px;}
+        .status-success { color: #27ae60; font-size: 12px; font-weight: bold; text-align: center; border-bottom: 1px dashed #eee; padding-bottom: 5px; margin-bottom: 8px;}
+        .metric-row { display: flex; justify-content: space-between; margin: 4px 0; font-size: 13px; }
+        .metric-key { color: #555; }
+        .metric-value { color: #e74c3c; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1> VisionGuard 评测平台</h1>
+    <p class="subtitle"> 支持多选文件并发评测/自动匹配同名参考图 </p>
+
+    <div class="upload-row">
+        <div class="upload-group">
+            <label> 待测图像:</label>
+            <input type="file" id="pred_files" accept="image/*" multiple>
+        </div>
+        <div class="upload-group">
+            <label> 参考图(按文件名匹配):</label>
+            <input type="file" id="gt_files" accept="image/*" multiple>
+        </div>
+    </div>
+
+    <button id="submitBtn" class="btn" onclick="submitBatchTasks()">  测试 </button>
+
+    <div id="batch-results"></div>
+</div>
+
+<script>
+    async function submitBatchTasks() {
+        const predFiles = document.getElementById('pred_files').files;
+        const gtFiles = document.getElementById('gt_files').files;
+        const btn = document.getElementById('submitBtn');
+        const batchResults = document.getElementById('batch-results');
+
+        if (predFiles.length === 0) {
+            alert(" 请上传待测图像！");
+            return;
+        }
+
+
+        btn.disabled = true;
+        btn.innerText = `处理中：0 / ${predFiles.length}`;
+        batchResults.innerHTML = ""; 
+
+      
+        const gtMap = {};
+        for (let i = 0; i < gtFiles.length; i++) {
+            gtMap[gtFiles[i].name] = gtFiles[i];
+        }
+
+        let completedCount = 0;
+
+        
+        for (let i = 0; i < predFiles.length; i++) {
+            const predFile = predFiles[i];
+            const gtFile = gtMap[predFile.name]; 
+            const cardId = 'task-card-' + i;
+
+            batchResults.innerHTML += `
+                <div class="task-card" id="${cardId}">
+                    <div class="task-filename">${predFile.name}</div>
+                    <div id="status-${cardId}" class="status-polling"> 等待响应...</div>
+                </div>
+            `;
+        }
+
+    
+        setTimeout(() => {
+            for (let i = 0; i < predFiles.length; i++) {
+                const predFile = predFiles[i];
+                const gtFile = gtMap[predFile.name];
+                const cardId = 'task-card-' + i;
+                
+            
+                uploadAndPollSingle(predFile, gtFile, cardId, () => {
+                    completedCount++;
+                    btn.innerText = `处理中：${completedCount} / ${predFiles.length}`;
+                
+                    if (completedCount === predFiles.length) {
+                        btn.disabled = false;
+                        btn.innerText = "测试";
+                    }
+                });
+            }
+        }, 100);
+    }
+
+    async function uploadAndPollSingle(predFile, gtFile, cardId, onCompleteCallback) {
+        const statusDiv = document.getElementById(`status-${cardId}`);
+        const formData = new FormData();
+        formData.append("pred_file", predFile);
+        if (gtFile) {
+            formData.append("gt_file", gtFile);
+        }
+
+        try {
+            statusDiv.innerHTML = "正在上传...";
+            const response = await fetch('/api/v1/submit_eval', { method: 'POST', body: formData });
+            const data = await response.json();
+
+            if (response.status === 202) {
+                const taskId = data.task_id;
+                statusDiv.innerHTML = `计算中...<br><span style="font-size:10px; color:#95a5a6">${taskId.substring(0,8)}</span>`;
+                
+                const interval = setInterval(async () => {
+                    try {
+                        const res = await fetch(`/api/v1/task_status/${taskId}`);
+                        const taskData = await res.json();
+                        
+                        if (taskData.status.startsWith("completed")) {
+                            clearInterval(interval); 
+                            
+                            let html = `<div class='status-success'> ✅ ${taskData.cost_time_ms} ms</div>`;
+                            for (const [key, value] of Object.entries(taskData.metrics)) {
+                                if (key !== "Conclusion") { 
+                                    html += `<div class="metric-row"><span class="metric-key">${key}</span> <span class="metric-value">${value}</span></div>`;
+                                }
+                            }
+                            statusDiv.innerHTML = html;
+                            onCompleteCallback(); 
+
+                        } else if (taskData.status === "failed") {
+                            clearInterval(interval);
+                            statusDiv.innerHTML = `<div style="color:red; text-align:center;"> 算法崩溃</div>`;
+                            onCompleteCallback();
+                        }
+                    } catch (e) {
+                        clearInterval(interval);
+                        statusDiv.innerHTML = `<div style="color:red; text-align:center;"> 查询异常</div>`;
+                        onCompleteCallback();
+                    }
+                }, 1000);
+            } else {
+                statusDiv.innerHTML = `<div style="color:red; text-align:center;"> 拒绝请求</div>`;
+                onCompleteCallback();
+            }
+        } catch (error) {
+            statusDiv.innerHTML = `<div style="color:red; text-align:center;"> 网络断开</div>`;
+            onCompleteCallback();
+        }
+    }
+</script>
+
+</body>
+</html>
