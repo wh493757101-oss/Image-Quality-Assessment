@@ -10,7 +10,7 @@ PREDS_DIR = "preds"
 GTS_DIR = "gts"
 SUPPORTED_EXTS = ('.jpg', '.jpeg', '.png', '.bmp')
 def submit_single_pair(filename):
-    """提交图片判断是否携带GT"""
+    """判断图片是否携带GT"""
     pred_path = os.path.join(PREDS_DIR, filename)
     gt_path = os.path.join(GTS_DIR, filename)
     f_pred = open(pred_path, "rb")

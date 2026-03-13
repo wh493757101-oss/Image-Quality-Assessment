@@ -21,3 +21,8 @@ data/preds/*
 !data/preds/.gitkeep
 data/gts/*
 !data/gts/.gitkeep
+
+# 测试生成的临时文件
+.pytest_cache/
+htmlcov/
+.coverage
